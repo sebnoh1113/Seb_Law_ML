@@ -2,7 +2,9 @@ from argparse import Namespace
 from collections import Counter
 from torch.utils.data import Dataset, DataLoader
 from konlpy.tag import Okt
+from gensim.models import word2vec
 
+import pickle
 import collections
 import json
 import os
@@ -39,7 +41,7 @@ args = Namespace(
     num_channels=256,
     # 훈련 하이퍼파라미터
     learning_rate=0.001,
-    batch_size=1,
+    batch_size=16,
     # batch_size=128,
     num_epochs=100,
     early_stopping_criteria=5,
@@ -47,11 +49,14 @@ args = Namespace(
 
     # 실행 옵션
     catch_keyboard_interrupt=True,
-    cuda=True,
+    cuda=False,
     expand_filepaths_to_save_dir=True,
     reload_from_files=False,
 )
 
+print("# word2vec retrieving")
+with open('word2vec.model', 'rb') as f:
+    wvmodel = pickle.load(f)
 # def ko_sentences_preproc(lines: list) -> list : # from konlpy.tag import Okt
 #         print(f'totally {len(lines)} lines')
 #         i = 0
@@ -316,6 +321,26 @@ class ReviewVectorizer(object):
             one_hot_matrix[token_index][position_index] = 1
 
         return one_hot_matrix
+
+    def wvectorize(self, review, wvmodel):
+        """ 리뷰에 대한 웟-핫 벡터를 만듭니다
+        매개변수:
+            review (str): 리뷰
+        반환값:
+            one_hot (np.ndarray): 원-핫 벡터
+        """
+        matrix_size=  (wvmodel.vector_size, self._max_review_length) # 한 열이 한 단어 열의 개수는 문장 길이
+        one_hot_matrix = np.zeros(matrix_size, dtype=np.float32)
+        
+        # return one_hot_matrix
+        for i, token in enumerate(review.split(" ")):
+            try:
+                wvector = wvmodel.wv[token]
+            except:
+                wvector = np.zeros(100, dtype=np.float32)
+            one_hot_matrix[:, i]= wvector
+
+        return one_hot_matrix
     
     def to_serializable(self):
         """ 캐싱을 위해 직렬화된 딕셔너리를 만듭니다
@@ -437,7 +462,7 @@ class ReviewDataset(Dataset):
         row = self._target_df.iloc[index]
 
         review_matrix = \
-            self._vectorizer.vectorize(row.review) # vector 아니라 matrix 반환 (review에 해당)
+            self._vectorizer.wvectorize(row.review, wvmodel) # vector 아니라 matrix 반환 (review에 해당)
 
         rating_index = \
             self._vectorizer.rating_vocab.lookup_token(row.rating) # vector 아니라 정수 반환
@@ -458,6 +483,7 @@ class ReviewDataset(Dataset):
 class ReviewClassifier(nn.Module):
 
     def __init__(self, initial_num_channels, num_classes, num_channels):
+    # def __init__(self, initial_num_channels, num_classes, num_channels):
         """
         매개변수:
             initial_num_channels (int): 입력 특성 벡터의 크기
@@ -468,26 +494,27 @@ class ReviewClassifier(nn.Module):
         """
         super(ReviewClassifier, self).__init__()
        
-        self.convnet = nn.Sequential( # out channels / kernel size / stride 등은 서로 독립적으로 정해질 수 있음 / 목표는 열 개수가 1이 되도록 하는 것으로 이는 stride가 주로 영향을 줌 # shape -> 12622, 26408
+        self.convnet1 = nn.Sequential( # out channels / kernel size / stride 등은 서로 독립적으로 정해질 수 있음 / 목표는 열 개수가 1이 되도록 하는 것으로 이는 stride가 주로 영향을 줌 # shape -> 12622, 26408
             nn.Conv1d(in_channels=initial_num_channels, 
-                      out_channels=8000, kernel_size=15, stride = 7),
-            nn.ELU(),
-            nn.Conv1d(in_channels=8000, out_channels=6000, 
+                      out_channels=80, kernel_size=15, stride = 7),
+              )
+        self.convnet2 = nn.Sequential( # out channels / kernel size / stride 등은 서로 독립적으로 정해질 수 있음 / 목표는 열 개수가 1이 되도록 하는 것으로 이는 stride가 주로 영향을 줌 # shape -> 12622, 26408
+            nn.Conv1d(in_channels=80, out_channels=6000, 
                       kernel_size=10, stride=7),
             nn.ELU(),
-            nn.Conv1d(in_channels=6000, out_channels=4000, 
+            nn.Conv1d(in_channels=60, out_channels=4000, 
                       kernel_size=7, stride=5),
             nn.ELU(),
-            nn.Conv1d(in_channels=4000, out_channels=2000, 
+            nn.Conv1d(in_channels=40, out_channels=2000, 
                       kernel_size=5, stride=3),          
             nn.ELU(),
-            nn.Conv1d(in_channels=2000, out_channels=1000, 
+            nn.Conv1d(in_channels=20, out_channels=1000, 
                       kernel_size=3, stride=2),
             nn.ELU(),
-            nn.Conv1d(in_channels=1000, out_channels=500, 
+            nn.Conv1d(in_channels=15, out_channels=500, 
                       kernel_size=3, stride=2),
             nn.ELU(),
-            nn.Conv1d(in_channels=500, out_channels=256, 
+            nn.Conv1d(in_channels=8, out_channels=256, 
                       kernel_size=8, stride=1),                   
              nn.ELU(),
               )
@@ -504,9 +531,11 @@ class ReviewClassifier(nn.Module):
         반환값:
             결과 텐서. tensor.shape은 (batch, num_classes)입니다.
         """
-        print("\nshapes---------- \n")
+        print("\n \nshapes---------- \n")
         print(x_data.shape)
-        features = self.convnet(x_data)
+        temp = self.convnet1(x_data)
+        print(temp.shape)
+        features = self.convnet2(temp)
         print(features.shape)
         features = features.squeeze(dim=2)
         print(features.shape)
@@ -551,7 +580,7 @@ def predict_rating(review, classifier, vectorizer, decision_threshold=0.5):
     """
     #review = ko_sentences_preproc(review)
     
-    vectorized_review = torch.tensor(vectorizer.vectorize(review))
+    vectorized_review = torch.tensor(vectorizer.wvectorize(review, wvmodel))
     result = classifier(vectorized_review.view(1, -1), apply_softmax=True)
     
     probability_values, indices = result.max(dim=1)
@@ -666,7 +695,8 @@ if __name__ == '__main__':
     vectorizer = dataset.get_vectorizer()
 
     # 클래시파이어 로드
-    classifier = ReviewClassifier(initial_num_channels=len(vectorizer.review_vocab), num_classes=len(vectorizer.rating_vocab), num_channels=args.num_channels) 
+    classifier = ReviewClassifier(initial_num_channels=100, num_classes=len(vectorizer.rating_vocab), num_channels=args.num_channels) 
+    # classifier = ReviewClassifier(initial_num_channels=len(vectorizer.review_vocab), num_classes=len(vectorizer.rating_vocab), num_channels=args.num_channels) 
     print("\n 데이터 포인트 매트릭스의 차원: \n")
     print(f" row : {len(vectorizer.review_vocab)} \n")
     print(f" col : {vectorizer._max_review_length} \n")
@@ -861,7 +891,7 @@ if __name__ == '__main__':
 #   File "C:\Users\imhno\anaconda3\envs\pytorch_cuda\lib\site-packages\torch\utils\data\_utils\fetch.py", line 44, in <listcomp>
 #     data = [self.dataset[idx] for idx in possibly_batched_index]
 #   File "c:/Users/imhno/Seb_Python_Projects/PyProjects/Pytorch Exercise/nlp_pipeline.py", line 351, in __getitem__
-#     self._vectorizer.vectorize(row.review)
+#     self._vectorizer.wvectorize(row.review)
 #   File "c:/Users/imhno/Seb_Python_Projects/PyProjects/Pytorch Exercise/nlp_pipeline.py", line 176, in vectorize
 #     one_hot = np.zeros(matrix_size, dtype=np.float32)
 # numpy.core._exceptions.MemoryError: Unable to allocate 329. MiB for an array with shape (5526, 15604) and data type float32
