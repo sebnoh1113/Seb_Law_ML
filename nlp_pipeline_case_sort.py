@@ -49,7 +49,7 @@ args = Namespace(
 
     # 실행 옵션
     catch_keyboard_interrupt=True,
-    cuda=False,
+    cuda=True,
     expand_filepaths_to_save_dir=True,
     reload_from_files=False,
 )
@@ -89,7 +89,7 @@ def final_reviews_maker(args):
     # 원본 데이터를 읽습니다
     train_reviews = pd.read_csv(args.raw_train_dataset_csv) # 한글 전처리된 csv
     train_reviews = train_reviews.dropna()
-    header_dict={'case_sort':'rating', 'precReasoning':'review'}
+    header_dict={'case_sort':'rating', 'precSentences':'review'}
     train_reviews.rename(columns=header_dict,inplace=True)
     print("\n train reviews based on dfFinal csv: \n")
     print(train_reviews.info())
@@ -352,6 +352,7 @@ class ReviewVectorizer(object):
                 'rating_vocab': self.rating_vocab.to_serializable(),
                 'max_review_length': self._max_review_length}
 
+
 class ReviewDataset(Dataset):
     
     @classmethod ####################################################################
@@ -499,19 +500,19 @@ class ReviewClassifier(nn.Module):
                       out_channels=80, kernel_size=15, stride = 7),
               )
         self.convnet2 = nn.Sequential( # out channels / kernel size / stride 등은 서로 독립적으로 정해질 수 있음 / 목표는 열 개수가 1이 되도록 하는 것으로 이는 stride가 주로 영향을 줌 # shape -> 12622, 26408
-            nn.Conv1d(in_channels=80, out_channels=6000, 
+            nn.Conv1d(in_channels=80, out_channels=60, 
                       kernel_size=10, stride=7),
             nn.ELU(),
-            nn.Conv1d(in_channels=60, out_channels=4000, 
+            nn.Conv1d(in_channels=60, out_channels=40, 
                       kernel_size=7, stride=5),
             nn.ELU(),
-            nn.Conv1d(in_channels=40, out_channels=2000, 
+            nn.Conv1d(in_channels=40, out_channels=20, 
                       kernel_size=5, stride=3),          
             nn.ELU(),
-            nn.Conv1d(in_channels=20, out_channels=1000, 
+            nn.Conv1d(in_channels=20, out_channels=15, 
                       kernel_size=3, stride=2),
             nn.ELU(),
-            nn.Conv1d(in_channels=15, out_channels=500, 
+            nn.Conv1d(in_channels=15, out_channels=8, 
                       kernel_size=3, stride=2),
             nn.ELU(),
             nn.Conv1d(in_channels=8, out_channels=256, 
