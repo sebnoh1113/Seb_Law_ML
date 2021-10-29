@@ -334,11 +334,12 @@ class ReviewVectorizer(object):
         
         # return one_hot_matrix
         for i, token in enumerate(review.split(" ")):
-            try:
-                wvector = wvmodel.wv[token]
-            except:
-                wvector = np.zeros(100, dtype=np.float32)
-            one_hot_matrix[:, i]= wvector
+            if i < matrix_size:
+                try:
+                    wvector = wvmodel.wv[token]
+                except:
+                    wvector = np.zeros(100, dtype=np.float32)
+                one_hot_matrix[:, i]= wvector
 
         return one_hot_matrix
     
@@ -507,16 +508,16 @@ class ReviewClassifier(nn.Module):
                       kernel_size=7, stride=5),
             nn.ELU(),
             nn.Conv1d(in_channels=40, out_channels=20, 
-                      kernel_size=5, stride=3),          
+                      kernel_size=7, stride=5),          
             nn.ELU(),
             nn.Conv1d(in_channels=20, out_channels=15, 
-                      kernel_size=3, stride=2),
+                      kernel_size=7, stride=5),
             nn.ELU(),
             nn.Conv1d(in_channels=15, out_channels=8, 
-                      kernel_size=3, stride=2),
+                      kernel_size=7, stride=5),
             nn.ELU(),
             nn.Conv1d(in_channels=8, out_channels=256, 
-                      kernel_size=8, stride=1),                   
+                      kernel_size=4, stride=1),                   
              nn.ELU(),
               )
         self.fc = nn.Linear(256, num_classes)
