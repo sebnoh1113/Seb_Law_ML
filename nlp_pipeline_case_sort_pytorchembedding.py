@@ -13,11 +13,13 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import tqdm
+import pickle
+import gensim
 
 args = Namespace(
     # 날짜와 경로 정보
     news_csv="./dfFinal.csv",
-    news_csv_="./dfFinal_.csv",
+    news_csv_="./dfFinal.csv",
     proportion_subset_of_train=1.0,
     train_proportion=0.7,
     val_proportion=0.15,
@@ -35,11 +37,11 @@ args = Namespace(
     seed=1337, 
     learning_rate=0.001, 
     dropout_p=0.1, 
-    batch_size=128, 
+    batch_size=32, 
     num_epochs=100, 
     early_stopping_criteria=5, 
     # 실행 옵션
-    cuda=False, 
+    cuda=True, 
     catch_keyboard_interrupt=True, 
     reload_from_files=False,
     expand_filepaths_to_save_dir=True
@@ -248,7 +250,7 @@ class NewsDataset(Dataset):
 
         # +1 if only using begin_seq, +2 if using both begin and end seq tokens
         measure_len = lambda context: len(context.split(" "))
-        self._max_seq_length = max(map(measure_len, news_df.title)) + 2
+        self._max_seq_length = max(map(measure_len, news_df.precSentences)) + 2
         
 
         self.train_df = self.news_df[self.news_df.split=='train']
@@ -267,7 +269,7 @@ class NewsDataset(Dataset):
         self.set_split('train')
 
         # 클래스 가중치
-        class_counts = news_df.category.value_counts().to_dict()
+        class_counts = news_df.case_sort.value_counts().to_dict()
         def sort_key(item):
             return self._vectorizer.category_vocab.lookup_token(item[0])
         sorted_counts = sorted(class_counts.items(), key=sort_key)
@@ -366,7 +368,7 @@ class NewsDataset(Dataset):
         return len(self) // batch_size
 
 def generate_batches(dataset, batch_size, shuffle=True,
-                     drop_last=True, device="cpu"): 
+                     drop_last=True, device="cuda"): 
     """
     파이토치 DataLoader를 감싸고 있는 제너레이터 함수.
     걱 텐서를 지정된 장치로 이동합니다.
@@ -533,7 +535,8 @@ def handle_dirs(dirpath):
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
         
-def load_w2v_from_file(w2v_filepath, words):
+def load_w2v_from_file(w2v_filepath):
+# def load_w2v_from_file(w2v_filepath, words):
     """w2v 임베딩 로드 
     
     매개변수:
@@ -542,19 +545,21 @@ def load_w2v_from_file(w2v_filepath, words):
         word_to_index (dict), embeddings (numpy.ndarary)
     """
 
-    word_to_index = {}
-    embeddings = []
-    with open(w2v_filepath, "r") as fp:
-        for index, word in enumerate(words):
-            word_to_index[word] = index
-            if type(fp.wv[word]) == 'numpy.ndarray':
-                embedding_i = fp.wv[word]
-            else:
-                embedding_i = np.zeros(100)
-            embeddings.append(embedding_i)
-    return word_to_index, np.stack(embeddings)
+    # word_to_index = {}
+    # embeddings = []
+    with open(w2v_filepath, "rb") as fp:
+        wvmodel = pickle.load(fp)
+        # for index, word in enumerate(words):
+        #     word_to_index[word] = index
+        #     if type(wvmodel.wv[word]) == 'numpy.ndarray':
+        #         embedding_i =  wvmodel.wv[word]
+        #     else:
+        #         embedding_i = np.zeros(100)
+        #     embeddings.append(embedding_i)
+    return wvmodel
+    # return word_to_index, np.stack(embeddings)
 
-def make_embedding_matrix(w2v_filepath, words):
+def make_embedding_matrix(w2v_filepath, vectorizer):
     """
     특정 단어 집합에 대한 임베딩 행렬을 만듭니다.
     
@@ -562,18 +567,24 @@ def make_embedding_matrix(w2v_filepath, words):
         w2v_filepath (str): 임베딩 파일 경로
         words (list): 단어 리스트
     """
-    word_to_idx, w2v_embeddings = load_w2v_from_file(w2v_filepath, words)
-    embedding_size = w2v_embeddings.shape[1]
-    
-    final_embeddings = np.zeros((len(words), embedding_size))
+    words = vectorizer.title_vocab._token_to_idx.keys()
+
+    wvmodel = load_w2v_from_file(w2v_filepath)
+    embedding_size = len(list(wvmodel.wv.index_to_key))
+    print(f"wv embedding size: {embedding_size}")
+
+    final_embeddings = np.zeros((len(words), args.embedding_size))
 
     for i, word in enumerate(words):
-        if word in word_to_idx:
-            final_embeddings[i, :] = w2v_embeddings[word_to_idx[word]]
+        if word in list(wvmodel.wv.index_to_key):
+            # print(np.array(wvmodel.wv[word]).shape)
+            final_embeddings[i, :] = np.array(wvmodel.wv[word])
         else:
-            embedding_i = torch.ones(1, embedding_size)
+            embedding_i = torch.ones(1, args.embedding_size)
             torch.nn.init.xavier_uniform_(embedding_i)
-            final_embeddings[i, :] = embedding_i
+            final_embeddings[i, :] = embedding_i.numpy()
+            # print(embedding_i.numpy().shape)
+            # print(type(embedding_i.numpy()))
 
     return final_embeddings
 
@@ -650,6 +661,7 @@ def final_reviews_maker(args):
     print("\n final review based on review subset: \n")
     print(final_reviews.info())
     print(final_reviews.head())
+    print()
    
     final_reviews.to_csv(args.news_csv, index=False) # 전처리와 분할된 데이터프레임
     return final_reviews
@@ -673,7 +685,7 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         args.cuda = False
         
-    args.device = torch.device("cuda" if args.cuda else "cpu")
+    args.device = torch.device("cuda" if args.cuda else "cuda")
     print("CUDA 사용여부: {}".format(args.cuda))
 
     # 재현성을 위해 시드 설정
@@ -697,9 +709,7 @@ if __name__ == "__main__":
 
     # w2v를 사용하거나 랜덤하게 임베딩을 초기화합니다
     if args.use_w2v:
-        words = vectorizer.title_vocab._token_to_idx.keys()
-        embeddings = make_embedding_matrix(w2v_filepath=args.w2v_filepath, 
-                                        words=words)
+        embeddings = make_embedding_matrix(w2v_filepath=args.w2v_filepath, vectorizer=vectorizer)
         print("사전 훈련된 임베딩을 사용합니다")
     else:
         print("사전 훈련된 임베딩을 사용하지 않습니다")
@@ -711,8 +721,11 @@ if __name__ == "__main__":
                                 hidden_dim=args.hidden_dim, 
                                 num_classes=len(vectorizer.category_vocab), 
                                 dropout_p=args.dropout_p,
-                                pretrained_embeddings=embeddings,
+                                pretrained_embeddings = embeddings, 
                                 padding_idx=0)
+
+    # weights = torch.FloatTensor(model.wv.vectors)
+    # embedding = nn.Embedding.from_pretrained(weights)
 
     classifier = classifier.to(args.device)
     dataset.class_weights = dataset.class_weights.to(args.device)
