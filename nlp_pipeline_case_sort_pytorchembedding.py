@@ -16,14 +16,14 @@ import tqdm
 
 args = Namespace(
     # 날짜와 경로 정보
-    news_csv="dfFinal.csv",
-    news_csv_="dfFinal_.csv",
+    news_csv="./dfFinal.csv",
+    news_csv_="./dfFinal_.csv",
     proportion_subset_of_train=1.0,
     train_proportion=0.7,
     val_proportion=0.15,
     test_proportion=0.15,
     vectorizer_file="vectorizer.json",
-    model_state_file="model.pth",
+    model_state_file="pytorchembedding_model.pth",
     save_dir="./",
     # 모델 하이퍼파라미터
     w2v_filepath='word2vec.model', 

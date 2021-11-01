@@ -1,3 +1,4 @@
 dfFinal.csv
 dfFinal_splits.csv
 vectorizer.json
+word2vec.model
